@@ -18,7 +18,9 @@ ANNOUNCESTATUSCHANGE=True
 SAVEPATH='' #uses current dir if empty, needs to end with delimiter (/)
 #END SETTINGS###########################
 
-from settings import *
+try: #Load custom settings if there are any
+   from settings import *
+except ModuleNotFoundError: pass
 
 def announce(text):
    print(text)
