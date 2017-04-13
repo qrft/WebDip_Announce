@@ -161,7 +161,8 @@ def CompareTurn(current,past):
       return True
    elif current['gamephase'] != past['gamephase']:
       announce('The Game "{2!s}" advanced to a new phase! It is now in the {0!s} phase of {1!s}.'.format(current['gamephase'],current['gamedate'],current['gameName']))
-      return False
+      return True
+   return False
 
 def CompareMessages(current,past):
    try:
