@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 #MODIFY SETTINGS IN settings.py #####
 gameURL='http://webdiplomacy.net/board.php?' #Tested with WebDiplomacy 1.43
 gameID='1234'
-ONESHOT=False #Run only once if True
+ONESHOT=True #Run only once if True
 WAITTIME=5 #Time in minutes between fetches
 TURNWARNING=12 #in hours
 TURNFATAL=6 #in hours
@@ -71,6 +71,7 @@ def GameTurn():
    r = dict()
    titlebar = soup.find('div', {'class':'titleBar'})
    if not titlebar: return {}
+   r['gameName'] = titlebar.find('span', {'class':'gameName'}).contents[0]
    r['gamedate'] = titlebar.find('span', {'class':'gameDate'}).contents[0]
    r['gamephase'] = titlebar.find('span', {'class':'gamePhase'}).contents[0]
    state = ("".join(str(i) for i in titlebar.find('span', {'class':'gameTimeRemaining'}).contents))
@@ -156,10 +157,10 @@ def CompareTurn(current,past):
    Checks if we are in a new turn, compared to last fetch
    '''
    if current['gamedate'] != past['gamedate']:
-      announce("A new turn begun! We're in {0!s}".format(current['gamedate']))
+      announce('The game "{1!s}" advanced to a new turn! It is now {0!s}.'.format(current['gamedate'],current['gameName']))
       return True
    elif current['gamephase'] != past['gamephase']:
-      announce("A new phase begun! We're now in the {0!s} phase of year {1!s}".format(current['gamephase'],current['gamedate']))
+      announce('The Game "{2!s}" advanced to a new phase! It is now in the {0!s} phase of {1!s}.'.format(current['gamephase'],current['gamedate'],current['gameName']))
       return False
 
 def CompareMessages(current,past):
