@@ -4,35 +4,86 @@ import urllib.request
 import json
 import os
 import time
-from bs4 import BeautifulSoup
+import sys
+from bs4 import BeautifulSoup, Tag
 
 #STANDARD SETTINGS###################
 #MODIFY SETTINGS IN settings.py #####
-gameURL='http://webdiplomacy.net/board.php?' #Tested with WebDiplomacy 1.43
-gameID='1234'
-ONESHOT=True #Run only once if True
-WAITTIME=5 #Time in minutes between fetches
-TURNWARNING=12 #in hours
-TURNFATAL=6 #in hours
-ANNOUNCESTATUSCHANGE=True
-SAVEPATH='' #uses current dir if empty, needs to end with delimiter (/)
 #END SETTINGS###########################
 
-try: #Load custom settings if there are any
-   from settings import *
-except ModuleNotFoundError: pass
 
-def announce(text):
-   print(text)
+#Load Custom Settings File
+s,settingsfile = dict(),False
+if os.path.exists('settings.json'):
+   settingsfile = 'settings.json'
+if settingsfile:
+   with open(settingsfile) as infile:
+      s = json.load(infile)
+#Add Standard Settings
+stdsettings = {
+   'gameURL':'http://webdiplomacy.net/board.php?',
+   'gameID':'1234',
+   'ONESHOT':True,
+   'WAITTIME':5,
+   'TURNWARNING':12,
+   'TURNFATAL':6,
+   'ANNOUNCESTATUSCHANGE':True,
+   'SAVEPATH':'',
+   'notifymessage':{},
+   'notifyturn':{},
+   'notifywarning':{}}
+for st in stdsettings:
+   if st not in s:
+      s[st] = stdsettings[st]
+
+def announce(text,type=None):
+   who = get_recipient(type)
+   if s['NOTIFYBYMAIL']:
+      import notify_mail
+      notify_mail.mail_me(who,text)
+      print(text)
+   else:
+      print(text)
+
+def get_recipient(type):
+   who = list()
+   #TODO: could be simpler
+   if type == "message":
+      if 'WDA_stop_all' in s["notifymessage"]:
+         if s["notifymessage"]['WDA_stop_all'] == True:
+            return False
+      for u in s["notifymessage"]:
+         if s["notifymessage"][u] == True:
+            who.append(u)
+   if type == "turn":
+      if 'WDA_stop_all' in s["notifyturn"]:
+         if s["notifyturn"]['WDA_stop_all'] == True:
+            return False
+      for u in s["notifyturn"]:
+         if s["notifyturn"][u] == True:
+            who.append(u)
+   if type == "warning":
+      if 'WDA_stop_all' in s["notifywarning"]:
+         if s["notifywarning"]['WDA_stop_all'] == True:
+            return False
+      for u in s["notifywarning"]:
+         if s["notifywarning"][u] == True:
+            who.append(u)
+
+   recipients = list()
+   for i,w in enumerate(who):
+      if w in s['users']:
+         recipients.append(s['users'])
+   return recipients
 
 ###BEAUTIFUL SOUP HTML###################################################################
 def GetPage():
    global soup
    try:
-      with urllib.request.urlopen(gameURL+'gameID='+gameID) as response:
+      with urllib.request.urlopen(s['gameURL']+'gameID='+s['gameID']) as response:
          html = response.read()
    except urllib.error.URLError as e:
-      announce("There was an error fetching the page:\n{0!s}".format(e))
+      announce("There was an error fetching the page:\n{0!s}".format(e),'error')
       return False
    soup = BeautifulSoup(html, 'html.parser')
    return True
@@ -95,12 +146,13 @@ def Messages():
    countries,messages = dict(),list()
 
    #Extract country information
-   countrylist = soup.find('div', {'class':'chatbox', 'class':'chatboxnotabs'})
+   countrylist = soup.find('div', {'class':'chatboxMembersList'})
    if countrylist:
-      countrylist = countrylist.find('div', {'class':'chatboxMembersList'})
-      for c in countrylist.findAll('span'):
-         if 'country' in "".join(c['class']):
-            countries[c['class'][0]] = c.contents[0]
+      for spans in countrylist:
+         for t in spans:
+            if not isinstance(t, Tag): continue
+            if 'country' in t['class'][0]:
+               countries[t['class'][0]] = t.contents[0]
    else: countries = {}
 
    #Get messages
@@ -135,10 +187,24 @@ def DumpFile(data):
    '''
    Saves information in json file
    '''
-   if os.path.exists(SAVEPATH+'db{0!s}.json'.format(gameID)):
-      os.rename(SAVEPATH+'db{0!s}.json'.format(gameID), SAVEPATH+'db{0!s}_old.json'.format(gameID))
-   with open(SAVEPATH+'db{0!s}.json'.format(gameID), 'w') as outfile:
+
+   a = ['notifymessage','notifyturn','notifywarning']
+   for x in a:
+      data[x] = s[x]
+
+   if os.path.exists(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID'])):
+      os.rename(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']), s['SAVEPATH']+'db{0!s}_old.json'.format(s['gameID']))
+   with open(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']), 'w') as outfile:
       json.dump(data, outfile)
+
+def LoadFile(filename):
+   with open(filename) as infile:
+      F = json.load(infile)
+
+   a = ['notifymessage','notifyturn','notifywarning']
+   for x in a:
+      if x in F: s[x] = F[x]
+   return F
 
 def CompareStatus(current,past):
    '''
@@ -149,7 +215,7 @@ def CompareStatus(current,past):
    else:
       for s in current:
          if (s in past) and current[s]['status'] != past[s]['status']:
-            announce("{0!s}'s status has changed from {1!s} to {2!s}".format(s,past[s]['status'],current[s]['status']))
+            announce("{0!s}'s status has changed from {1!s} to {2!s}".format(s,past[s]['status'],current[s]['status']),'status')
    return
 
 def CompareTurn(current,past):
@@ -157,22 +223,50 @@ def CompareTurn(current,past):
    Checks if we are in a new turn, compared to last fetch
    '''
    if current['gamedate'] != past['gamedate']:
-      announce('The game "{1!s}" advanced to a new turn! It is now {0!s}.'.format(current['gamedate'],current['gameName']))
+      announce('The game "{1!s}" advanced to a new turn! It is now {0!s}.'.format(current['gamedate'],current['gameName']),'turn')
       return True
    elif current['gamephase'] != past['gamephase']:
-      announce('The Game "{2!s}" advanced to a new phase! It is now in the {0!s} phase of {1!s}.'.format(current['gamephase'],current['gamedate'],current['gameName']))
+      announce('The Game "{2!s}" advanced to a new phase! It is now in the {0!s} phase of {1!s}.'.format(current['gamephase'],current['gamedate'],current['gameName']),'turn')
       return True
    return False
 
 def CompareMessages(current,past):
-   try:
-      if len(current) == len(past) and current[-1] == past[-1]: #No new messages
-         return
-   except IndexError: return
-      
+   #if len(current) == len(past) and current[-1] == past[-1]: #No new messages
+   #   print("seems like no new message appeared")
+   #   return False
    for m in current:
       if m not in past:
-         announce('New message from {0!s}: "{1!s}"'.format(m['who'],m['text']))
+            #Check if its a WebDipAnn command
+         if m['text'].startswith('WDA: '):
+            cmd = m['text'][5:].split(' ')
+            if len(cmd) != 3: continue #break if not enough arguments
+            if cmd[1] == 'notify':
+               if cmd[0] == 'admin':
+                  if cmd[2] == 'stop':
+                     s['notifymessage']['WDA_stop_all'] = True
+                     s['notifyturn']['WDA_stop_all'] = True
+                     s['notifywarning']['WDA_stop_all'] = True
+                  elif cmd[2] == 'reset':
+                     s['notifymessage']['WDA_stop_all'] = False
+                     s['notifyturn']['WDA_stop_all'] = False
+                     s['notifywarning']['WDA_stop_all'] = False
+               elif cmd[0] in ['start','stop']:
+                  if cmd[0] == 'start': cmd[0] = True
+                  elif cmd[0] == 'stop': cmd[0] = False
+                  cmd[2] = cmd[2].lstrip('[').rstrip(']')
+                  for x in cmd[2].split(','):
+                     if x == 'message':
+                        s['notifymessage'][m['who']] = cmd[0]
+                     if x == 'turn':
+                        s['notifyturn'][m['who']] = cmd[0]
+                     if x == 'warning':
+                        s['notifywarning'][m['who']] = cmd[0]
+                     if x == 'all':
+                        s['notifywarning'][m['who']] = cmd[0]
+                        s['notifyturn'][m['who']] = cmd[0]
+                        s['notifymessage'][m['who']] = cmd[0]
+         else:
+            announce('New message from {0!s}: "{1!s}"'.format(m['who'],m['text']),'message')
    return
 
 
@@ -185,11 +279,11 @@ def TimerWarning(current):
    if 'state' in current:
       if current['state'] == 'Paused' or current['state'] == 'Finished': return
    r = [i for i in current['status'] if current['status'][i]['status'] not in ['Completed','Defeated']]
-   if current['gameturn']['unixdiff'] < TURNWARNING and not current['warned']['warning']:
-      announce("{1!s} still need to make orders. Hurry up, only {0!s} until the turn ends".format(current['gameturn']['timeremaining'],r))
+   if current['gameturn']['unixdiff'] < s['TURNWARNING'] and not current['warned']['warning']:
+      announce("{1!s} still need to make orders. Hurry up, only {0!s} until the turn ends".format(current['gameturn']['timeremaining'],r),'warning')
       current['warned']['warning'] = True
-   if current['gameturn']['unixdiff'] < TURNFATAL and not current['warned']['fatal']:
-      announce("{1!s}, you are slow! Only {0!s} until the turn ends".format(current['gameturn']['timeremaining'],r))
+   if current['gameturn']['unixdiff'] < s['TURNFATAL'] and not current['warned']['fatal']:
+      announce("{1!s}, you are slow! Only {0!s} until the turn ends".format(current['gameturn']['timeremaining'],r),'warning')
       current['warned']['fatal'] = True
    return
 
@@ -208,6 +302,12 @@ def FetchAll():
       info['warned']['fatal'] = False
    #Check validity of information
    if info['gameturn'] == {} and info['status'] == {}: return False
+   if 'notifymessage' not in info:
+      info["notifymessage"] = {}
+   if 'notifywarning' not in info:
+      info["notifywarning"] = {}
+   if 'notifyturn' not in info:
+      info["notifyturn"] = {}
    return info
 
 def MainLoop(t=5):
@@ -217,27 +317,23 @@ def MainLoop(t=5):
          break
       current = FetchAll()
       if not current:
-         announce("Something went wrong, not processing gameID:{0!s}\nDumpFetch:\n{1!s}".format(gameID,current))
+         announce("Something went wrong, not processing gameID:{0!s}\nDumpFetch:\n{1!s}".format(s['gameID'],current),'error')
          break
-      if os.path.exists(SAVEPATH+'db{0!s}.json'.format(gameID)):
-         with open(SAVEPATH+'db{0!s}.json'.format(gameID)) as infile:
-            past = json.load(infile)
-            current['warned'] = past['warned']
+      if os.path.exists(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID'])):
+         past = LoadFile(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']))
+         current['warned'] = past['warned']
          if not CompareTurn(current['gameturn'], past['gameturn']):
             TimerWarning(current)
-            if ANNOUNCESTATUSCHANGE:
+            if s['ANNOUNCESTATUSCHANGE']:
                CompareStatus(current['status'], past['status'])
          else:
             current['warned']['warning'] = False #Reset warnings
             current['warned']['fatal'] = False #Reset warnings
          CompareMessages(current['messages'], past['messages'])
-         DumpFile(current)
-      else:
-         print("No db.json file found, dumping current to file. Location: {0!s}".format(SAVEPATH+"db{0!s}.json".format(gameID)))
-         DumpFile(current)
-
-      if(ONESHOT): break
-      time.sleep(t*60)
+      DumpFile(current)
+      if not s["ONESHOT"]:
+         time.sleep(t)
+      else: break
 
 if __name__ == "__main__":
-      MainLoop(WAITTIME)
+      MainLoop(s['WAITTIME'])
