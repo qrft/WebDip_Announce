@@ -29,46 +29,35 @@ stdsettings = {
    'TURNFATAL':6,
    'ANNOUNCESTATUSCHANGE':True,
    'SAVEPATH':'',
-   'notifymessage':{},
-   'notifyturn':{},
-   'notifywarning':{}}
+   'NOTIFYBYMAIL':False,
+   'NOTIFYBYSTDOUT':True,
+   'notify':{'message':{},'turn':{},'warning':{}}
+   }
 for st in stdsettings:
    if st not in s:
       s[st] = stdsettings[st]
 
 def announce(text,type=None):
-   who = get_recipient(type)
+   #Here you could implement a new function for notifying according to your needs.
    if s['NOTIFYBYMAIL']:
       import notify_mail
-      notify_mail.mail_me(who,text)
+      who = get_recipient(type)
+      if who: notify_mail.mail_me(who,text)
+   if s['NOTIFYBYSTDOUT']:
       print(text)
-   else:
-      print(text)
+   return
 
-def get_recipient(type):
+def get_recipient(mytype):
    who = list()
-   #TODO: could be simpler
-   if type == "message":
-      if 'WDA_stop_all' in s["notifymessage"]:
-         if s["notifymessage"]['WDA_stop_all'] == True:
+   try:
+      if 'WDA_stop_all' in s['notify'][mytype]:
+         if s['notify'][mytype]['WDA_stop_all'] == True:
             return False
-      for u in s["notifymessage"]:
-         if s["notifymessage"][u] == True:
+      for u in s['notify'][mytype]:
+         if s['notify'][mytype][u] == True:
             who.append(u)
-   if type == "turn":
-      if 'WDA_stop_all' in s["notifyturn"]:
-         if s["notifyturn"]['WDA_stop_all'] == True:
-            return False
-      for u in s["notifyturn"]:
-         if s["notifyturn"][u] == True:
-            who.append(u)
-   if type == "warning":
-      if 'WDA_stop_all' in s["notifywarning"]:
-         if s["notifywarning"]['WDA_stop_all'] == True:
-            return False
-      for u in s["notifywarning"]:
-         if s["notifywarning"][u] == True:
-            who.append(u)
+   except KeyError:
+      return False
 
    recipients = list()
    for i,w in enumerate(who):
@@ -188,22 +177,20 @@ def DumpFile(data):
    Saves information in json file
    '''
 
-   a = ['notifymessage','notifyturn','notifywarning']
+   a = ['message','turn','warning']
+   data['notify'] = dict()
    for x in a:
-      data[x] = s[x]
+      data['notify'][x] = s['notify'][x]
 
-   if os.path.exists(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID'])):
-      os.rename(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']), s['SAVEPATH']+'db{0!s}_old.json'.format(s['gameID']))
+   #if os.path.exists(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID'])):
+   #   os.rename(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']), s['SAVEPATH']+'db{0!s}_old.json'.format(s['gameID']))
    with open(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']), 'w') as outfile:
       json.dump(data, outfile)
 
 def LoadFile(filename):
    with open(filename) as infile:
       F = json.load(infile)
-
-   a = ['notifymessage','notifyturn','notifywarning']
-   for x in a:
-      if x in F: s[x] = F[x]
+   s['notify'] = F['notify']
    return F
 
 def CompareStatus(current,past):
@@ -243,28 +230,23 @@ def CompareMessages(current,past):
             if cmd[1] == 'notify':
                if cmd[0] == 'admin':
                   if cmd[2] == 'stop':
-                     s['notifymessage']['WDA_stop_all'] = True
-                     s['notifyturn']['WDA_stop_all'] = True
-                     s['notifywarning']['WDA_stop_all'] = True
+                     for x in s['notify']:
+                        s['notify'][x]['WDA_stop_all'] = True
                   elif cmd[2] == 'reset':
-                     s['notifymessage']['WDA_stop_all'] = False
-                     s['notifyturn']['WDA_stop_all'] = False
-                     s['notifywarning']['WDA_stop_all'] = False
+                     for x in s['notify']:
+                        s['notify'][x]['WDA_stop_all'] = False
                elif cmd[0] in ['start','stop']:
                   if cmd[0] == 'start': cmd[0] = True
                   elif cmd[0] == 'stop': cmd[0] = False
                   cmd[2] = cmd[2].lstrip('[').rstrip(']')
                   for x in cmd[2].split(','):
-                     if x == 'message':
-                        s['notifymessage'][m['who']] = cmd[0]
-                     if x == 'turn':
-                        s['notifyturn'][m['who']] = cmd[0]
-                     if x == 'warning':
-                        s['notifywarning'][m['who']] = cmd[0]
+                     if x not in s['notify'] and x != 'all':
+                        s['notify'][x] = dict() #Generate new entry
+                     if x in s['notify']:
+                        s['notify'][x][m['who']] = cmd[0]
                      if x == 'all':
-                        s['notifywarning'][m['who']] = cmd[0]
-                        s['notifyturn'][m['who']] = cmd[0]
-                        s['notifymessage'][m['who']] = cmd[0]
+                        for y in s['notify']:
+                           s['notify'][y][m['who']] = cmd[0]
          else:
             announce('New message from {0!s}: "{1!s}"'.format(m['who'],m['text']),'message')
    return
@@ -302,12 +284,6 @@ def FetchAll():
       info['warned']['fatal'] = False
    #Check validity of information
    if info['gameturn'] == {} and info['status'] == {}: return False
-   if 'notifymessage' not in info:
-      info["notifymessage"] = {}
-   if 'notifywarning' not in info:
-      info["notifywarning"] = {}
-   if 'notifyturn' not in info:
-      info["notifyturn"] = {}
    return info
 
 def MainLoop(t=5):
@@ -317,7 +293,7 @@ def MainLoop(t=5):
          break
       current = FetchAll()
       if not current:
-         announce("Something went wrong, not processing gameID:{0!s}\nDumpFetch:\n{1!s}".format(s['gameID'],current),'error')
+         announce("Something went wrong, not processing gameID:{0!s}\nDumpFetch: {1!s}".format(s['gameID'],current),'error')
          break
       if os.path.exists(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID'])):
          past = LoadFile(s['SAVEPATH']+'db{0!s}.json'.format(s['gameID']))
@@ -332,7 +308,7 @@ def MainLoop(t=5):
          CompareMessages(current['messages'], past['messages'])
       DumpFile(current)
       if not s["ONESHOT"]:
-         time.sleep(t)
+         time.sleep(t*60)
       else: break
 
 if __name__ == "__main__":
