@@ -1,0 +1,12 @@
+{"gameID": "1234",
+ "ONESHOT": true,
+ "WAITTIME": 5,
+ "TURNWARNING": 12,
+ "TURNFATAL": 6,
+ "ANNOUNCESTATUSCHANGE": true,
+ "NOTIFYBYMAIL":false,
+ "users":{
+     "myusername":"testmail@me.com",
+     "playercountry":"testmail2@me.com"
+         },
+ "SAVEPATH": "./1234/"}
